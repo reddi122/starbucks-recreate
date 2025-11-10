@@ -50,7 +50,11 @@ jobs:
         run: |
           npm run build
           echo "✅ Build Completed!"
-          ls -lh build || true
+          if [ ! -d "build" ]; then
+            echo "❌ Build folder not found!"
+            exit 1
+          fi
+          ls -lh build
 
       # === Stage 5: Package Artifact ===
       - name: 📦 Package Build
@@ -61,10 +65,9 @@ jobs:
           echo "✅ Package created: $TARBALL"
           ls -lh *.tar.gz
 
-      # === Stage 6: Upload to Nexus ===
+      # === Stage 6: Upload Artifact to Nexus ===
       - name: 📤 Upload Artifact to Nexus
         run: |
-          set -e
           VERSION="0.0.${{ github.run_number }}"
           TARBALL="$NEXUS_ARTIFACT-$VERSION.tar.gz"
           echo "Uploading $TARBALL to Nexus..."
