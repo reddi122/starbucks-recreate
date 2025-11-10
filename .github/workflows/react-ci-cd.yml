@@ -1,4 +1,4 @@
-name: React App CI/CD
+name: React App CI/CD (Vite)
 
 on:
   workflow_dispatch:
@@ -45,23 +45,23 @@ jobs:
             -Dsonar.host.url=$SONAR_HOST_URL \
             -Dsonar.login=$SONAR_TOKEN
 
-      # === Stage 4: Build React App ===
+      # === Stage 4: Build React (Vite) App ===
       - name: 🏗 Build React App
         run: |
           npm run build
           echo "✅ Build Completed!"
-          if [ ! -d "build" ]; then
-            echo "❌ Build folder not found!"
+          if [ ! -d "dist" ]; then
+            echo "❌ dist folder not found!"
             exit 1
           fi
-          ls -lh build
+          ls -lh dist
 
       # === Stage 5: Package Artifact ===
       - name: 📦 Package Build
         run: |
           VERSION="0.0.${{ github.run_number }}"
           TARBALL="$NEXUS_ARTIFACT-$VERSION.tar.gz"
-          tar -czf "$TARBALL" -C build .
+          tar -czf "$TARBALL" -C dist .
           echo "✅ Package created: $TARBALL"
           ls -lh *.tar.gz
 
