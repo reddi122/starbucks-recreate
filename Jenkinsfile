@@ -1,103 +1,143 @@
-name: React App CI/CD
+pipeline {
+    agent { label 'sonar' }
 
-on:
-  workflow_dispatch:
+    environment {
+        SONARQUBE_SERVER = 'SonarQube'
+        NEXUS_URL = 'http://50.16.113.3:8081'
+        NEXUS_REPO = 'starbugs-app'
+        NEXUS_GROUP = 'com/web/starbugs'
+        NEXUS_ARTIFACT = 'starbugs-app'
+        NGINX_SERVER = '13.218.85.77'
+        NGINX_WEB_ROOT = '/var/www/html'
+    }
 
-jobs:
-  build-and-deploy:
-    runs-on: ubuntu-latest
+    stages {
+        /* === Stage 1: Checkout Code === */
+        stage('Checkout Code') {
+            steps {
+                echo '📦 Cloning source from GitHub...'
+                checkout([$class: 'GitSCM',
+                    branches: [[name: '*/main']],
+                    userRemoteConfigs: [[url: 'https://github.com/reddi122/starbucks-recreate.git']]
+                ])
+            }
+        }
 
-    env:
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      NEXUS_URL: ${{ secrets.NEXUS_URL }}
-      NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
-      NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
-      NEXUS_REPO: starbugs-app
-      NEXUS_GROUP: com/web/starbugs
-      NEXUS_ARTIFACT: starbugs-app
-      NGINX_HOST: ${{ secrets.NGINX_HOST }}
-      NGINX_PATH: ${{ secrets.NGINX_PATH }}
-      NGINX_SSH_KEY: ${{ secrets.NGINX_SSH_KEY }}
+        /* === Stage 2: Install Dependencies === */
+        stage('Install Dependencies') {
+            steps {
+                echo '📥 Installing npm dependencies...'
+                sh 'npm install'
+                sh 'echo ✅ Dependencies installed!'
+            }
+        }
 
-    steps:
-      # === Stage 1: Checkout Code ===
-      - name: 📦 Checkout source
-        uses: actions/checkout@v4
+        /* === Stage 3: SonarQube Analysis === */
+        stage('SonarQube Analysis') {
+            steps {
+                echo '🔍 Running SonarQube static analysis...'
+                sh 'npm install -g sonarqube-scanner || npm install --save-dev sonarqube-scanner'
+                withSonarQubeEnv("${SONARQUBE_SERVER}") {
+                    sh '''
+                        npx sonar-scanner \
+                          -Dsonar.projectKey=starbugs-app-js \
+                          -Dsonar.projectName="starbugs App JS" \
+                          -Dsonar.projectVersion=0.0.${BUILD_NUMBER} \
+                          -Dsonar.sources=src \
+                          -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+                          -Dsonar.sourceEncoding=UTF-8
+                    '''
+                }
+            }
+        }
 
-      # === Stage 2: Install Dependencies ===
-      - name: 📥 Install npm dependencies
-        run: |
-          npm install
-          echo "✅ Dependencies installed!"
+        /* === Stage 4: Run Tests === */
+        //stage('Run Tests') {
+        //    steps {
+         //       echo '🧪 Running tests...'
+         //       sh 'npm test'
+         //   }
+        //}
 
-      # === Stage 3: SonarQube Analysis ===
-      - name: 🔍 SonarQube Analysis
-        run: |
-          npm install -g sonarqube-scanner || npm install --save-dev sonarqube-scanner
-          npx sonar-scanner \
-            -Dsonar.projectKey=starbugs-app-js \
-            -Dsonar.projectName="starbugs App JS" \
-            -Dsonar.projectVersion=0.0.${{ github.run_number }} \
-            -Dsonar.sources=src \
-            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
-            -Dsonar.sourceEncoding=UTF-8 \
-            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-            -Dsonar.login=${{ env.SONAR_TOKEN }}
+        /* === Stage 5: Build Artifact === */
+        stage('Build Artifact') {
+            steps {
+                echo '⚙️ Building application...'
+                sh 'npm run build'
+                sh 'echo ✅ Build Completed!'
+                sh 'ls -lh dist/ || true'
+            }
+        }
 
-      # === Stage 4: Build React App ===
-      - name: 🏗 Build React App
-        run: |
-          npm run build
-          echo "✅ Build Completed!"
-          ls -lh build || true
+        /* === Stage 6: Package Artifact === */
+        stage('Package Artifact') {
+            steps {
+                echo '📦 Creating tarball...'
+                sh '''
+                    VERSION="0.0.${BUILD_NUMBER}"
+                    tar -czf ${NEXUS_ARTIFACT}-${VERSION}.tar.gz -C dist .
+                    echo "✅ Package created: ${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
+                    ls -lh *.tar.gz
+                '''
+            }
+        }
 
-      # === Stage 5: Package Artifact ===
-      - name: 📦 Package Build
-        run: |
-          VERSION="0.0.${{ github.run_number }}"
-          tar -czf ${NEXUS_ARTIFACT}-${VERSION}.tar.gz -C build .
-          echo "✅ Package created: ${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
-          ls -lh *.tar.gz
+        /* === Stage 7: Upload Artifact to Nexus === */
+        stage('Upload Artifact to Nexus') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'nexus', usernameVariable: 'NEXUS_USR', passwordVariable: 'NEXUS_PSW')]) {
+                    sh '''#!/bin/bash
+                        set -e
+                        VERSION="0.0.${BUILD_NUMBER}"
+                        TARBALL="${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
 
-      # === Stage 6: Upload to Nexus ===
-      - name: 📤 Upload Artifact to Nexus
-        run: |
-          set -e
-          VERSION="0.0.${{ github.run_number }}"
-          TARBALL="${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
-          echo "Uploading $TARBALL to Nexus..."
-          curl -v -u "${{ env.NEXUS_USERNAME }}:${{ env.NEXUS_PASSWORD }}" \
-            --upload-file "$TARBALL" \
-            "${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP }}/${{ NEXUS_ARTIFACT }}/${VERSION}/${TARBALL}"
-          echo "✅ Artifact uploaded successfully to Nexus!"
+                        echo "📤 Uploading $TARBALL to Nexus..."
 
-      # === Stage 7: Deploy to Nginx ===
-      - name: 🚀 Deploy to Nginx via SSH
-        uses: appleboy/ssh-action@v0.1.6
-        with:
-          host: ${{ env.NGINX_HOST }}
-          key: ${{ env.NGINX_SSH_KEY }}
-          script: |
-            VERSION="0.0.${{ github.run_number }}"
-            TARBALL="${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
-            TMP_DIR="/tmp/deploy_build"
+                        curl -v -u ${NEXUS_USR}:${NEXUS_PSW} --upload-file "$TARBALL" \
+                          "${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${TARBALL}"
 
-            # Clean old files
-            rm -rf $TMP_DIR
-            mkdir -p $TMP_DIR
+                        echo "✅ Artifact uploaded successfully to Nexus!"
+                    '''
+                }
+            }
+        }
 
-            # Download artifact from Nexus
-            curl -f -u "${{ env.NEXUS_USERNAME }}:${{ env.NEXUS_PASSWORD }}" \
-              -O "${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP }}/${{ NEXUS_ARTIFACT }}/${VERSION}/${TARBALL}"
+        /* === Stage 8: Deploy to Nginx === */
+        stage('Deploy to Nginx') {
+            agent { label 'nginx' }
+            steps {
+                withCredentials([usernamePassword(credentialsId: 'nexus', usernameVariable: 'NEXUS_USR', passwordVariable: 'NEXUS_PSW')]) {
+                    sh '''#!/bin/bash
+                        set -e
+                        cd /tmp; rm -f *.tar.gz
 
-            # Extract to temporary dir
-            tar -xzf "$TARBALL" -C $TMP_DIR
+                        VERSION="0.0.${BUILD_NUMBER}"
+                        TARBALL="${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
+                        DOWNLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${TARBALL}"
 
-            # Copy files to Nginx web root
-            sudo rm -rf ${{ env.NGINX_PATH }}/*
-            sudo mkdir -p ${{ env.NGINX_PATH }}
-            sudo cp -r $TMP_DIR/* ${{ env.NGINX_PATH }}/
-            sudo chown -R www-data:www-data ${{ env.NGINX_PATH }}
+                        echo "⬇️ Downloading tarball from: $DOWNLOAD_URL"
+                        curl -f -u ${NEXUS_USR}:${NEXUS_PSW} -O "$DOWNLOAD_URL"
 
-            echo "✅ Deployment successful! Application live on Nginx!"
+                        if [[ ! -f "$TARBALL" ]]; then
+                            echo "❌ Download failed!"
+                            exit 1
+                        fi
+
+                        echo "🚀 Deploying to Nginx..."
+                        sudo mkdir -p ${NGINX_WEB_ROOT}
+                        sudo rm -rf ${NGINX_WEB_ROOT}/*
+                        sudo tar -xzf "$TARBALL" -C ${NGINX_WEB_ROOT}/
+                        sudo chown -R www-data:www-data ${NGINX_WEB_ROOT}
+
+                        echo "✅ Deployment successful! Application live on Nginx!"
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success { echo '🎉 Pipeline completed successfully — Application live on Nginx!' }
+        failure { echo '❌ Pipeline failed — Check Jenkins logs.' }
+    }
+}
