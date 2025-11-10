@@ -42,8 +42,8 @@ jobs:
             -Dsonar.sources=src \
             -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
             -Dsonar.sourceEncoding=UTF-8 \
-            -Dsonar.host.url=${{ env.SONAR_HOST_URL }} \
-            -Dsonar.login=${{ env.SONAR_TOKEN }}
+            -Dsonar.host.url=$SONAR_HOST_URL \
+            -Dsonar.login=$SONAR_TOKEN
 
       # === Stage 4: Build React App ===
       - name: 🏗 Build React App
@@ -56,8 +56,9 @@ jobs:
       - name: 📦 Package Build
         run: |
           VERSION="0.0.${{ github.run_number }}"
-          tar -czf ${NEXUS_ARTIFACT}-${VERSION}.tar.gz -C build .
-          echo "✅ Package created: ${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
+          TARBALL="$NEXUS_ARTIFACT-$VERSION.tar.gz"
+          tar -czf "$TARBALL" -C build .
+          echo "✅ Package created: $TARBALL"
           ls -lh *.tar.gz
 
       # === Stage 6: Upload to Nexus ===
@@ -65,22 +66,22 @@ jobs:
         run: |
           set -e
           VERSION="0.0.${{ github.run_number }}"
-          TARBALL="${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
+          TARBALL="$NEXUS_ARTIFACT-$VERSION.tar.gz"
           echo "Uploading $TARBALL to Nexus..."
-          curl -v -u "${{ env.NEXUS_USERNAME }}:${{ env.NEXUS_PASSWORD }}" \
+          curl -v -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
             --upload-file "$TARBALL" \
-            "${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP }}/${{ NEXUS_ARTIFACT }}/${VERSION}/${TARBALL}"
-          echo "✅ Artifact uploaded successfully to Nexus!"
+            "$NEXUS_URL/repository/$NEXUS_REPO/$NEXUS_GROUP/$NEXUS_ARTIFACT/$VERSION/$TARBALL"
+          echo "✅ Artifact uploaded successfully!"
 
-      # === Stage 7: Deploy to Nginx ===
-      - name: 🚀 Deploy to Nginx via SSH
+      # === Stage 7: Deploy to Nginx via SSH ===
+      - name: 🚀 Deploy to Nginx
         uses: appleboy/ssh-action@v0.1.6
         with:
           host: ${{ env.NGINX_HOST }}
           key: ${{ env.NGINX_SSH_KEY }}
           script: |
             VERSION="0.0.${{ github.run_number }}"
-            TARBALL="${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
+            TARBALL="$NEXUS_ARTIFACT-$VERSION.tar.gz"
             TMP_DIR="/tmp/deploy_build"
 
             # Clean old files
@@ -88,16 +89,16 @@ jobs:
             mkdir -p $TMP_DIR
 
             # Download artifact from Nexus
-            curl -f -u "${{ env.NEXUS_USERNAME }}:${{ env.NEXUS_PASSWORD }}" \
-              -O "${{ env.NEXUS_URL }}/repository/${{ env.NEXUS_REPO }}/${{ env.NEXUS_GROUP }}/${{ NEXUS_ARTIFACT }}/${VERSION}/${TARBALL}"
+            curl -f -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
+              -O "$NEXUS_URL/repository/$NEXUS_REPO/$NEXUS_GROUP/$NEXUS_ARTIFACT/$VERSION/$TARBALL"
 
             # Extract to temporary dir
             tar -xzf "$TARBALL" -C $TMP_DIR
 
-            # Copy files to Nginx web root
-            sudo rm -rf ${{ env.NGINX_PATH }}/*
-            sudo mkdir -p ${{ env.NGINX_PATH }}
-            sudo cp -r $TMP_DIR/* ${{ env.NGINX_PATH }}/
-            sudo chown -R www-data:www-data ${{ env.NGINX_PATH }}
+            # Deploy to Nginx web root
+            sudo rm -rf $NGINX_PATH/*
+            sudo mkdir -p $NGINX_PATH
+            sudo cp -r $TMP_DIR/* $NGINX_PATH/
+            sudo chown -R www-data:www-data $NGINX_PATH
 
             echo "✅ Deployment successful! Application live on Nginx!"
