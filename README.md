@@ -1,4 +1,4 @@
-# Starbucks Redesign Project
+# Starbucks Redesign Project.
 
 This project is a modern redesign of the Starbucks website, featuring a dark theme, responsive design, and engaging animations while maintaining the brand's essence..
 
