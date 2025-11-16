@@ -1,108 +1,112 @@
-name: React App CI/CD (Vite)
+name: Starbugs CI/CD
 
 on:
   push:
-    branches: [ main ]
+    branches: ["main"]
 
 jobs:
-  build-and-deploy:
+  build:
     runs-on: ubuntu-latest
 
     env:
-      SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      NEXUS_URL: ${{ secrets.NEXUS_URL }}
-      NEXUS_USERNAME: ${{ secrets.NEXUS_USERNAME }}
-      NEXUS_PASSWORD: ${{ secrets.NEXUS_PASSWORD }}
-      NEXUS_REPO: starbugs-app
-      NEXUS_GROUP: com/web/starbugs
-      NEXUS_ARTIFACT: starbugs-app
-      NGINX_HOST: ${{ secrets.NGINX_HOST }}
-      NGINX_PATH: ${{ secrets.NGINX_PATH }}
-      NGINX_SSH_KEY: ${{ secrets.NGINX_SSH_KEY }}
+      SONAR_URL: "http://54.144.238.57:8081"
+      NEXUS_URL: "http://54.144.238.57:8082"
+      NEXUS_REPO: "starbugs-app"
+      NEXUS_GROUP: "com/web/starbugs"
+      NEXUS_ARTIFACT: "starbugs-app"
+      NGINX_HOST: "54.144.238.57"
+      VERSION: "0.0.${{ github.run_number }}"
+      DOCKER_IMAGE: "reddi122/starbugs-app:${{ github.run_number }}"
 
     steps:
-      # === Stage 1: Checkout Code ===
-      - name: 📦 Checkout source
-        uses: actions/checkout@v4
+      # ------------------------------
+      # 1. Checkout Code
+      # ------------------------------
+      - name: Checkout code
+        uses: actions/checkout@v3
 
-      # === Stage 2: Install Dependencies ===
-      - name: 📥 Install npm dependencies
-        run: |
-          npm install
-          echo "✅ Dependencies installed!"
+      # ------------------------------
+      # 2. Install Dependencies
+      # ------------------------------
+      - name: Install Node dependencies
+        run: npm install
 
-      # === Stage 3: SonarQube Analysis ===
-      - name: 🔍 SonarQube Analysis
+      # ------------------------------
+      # 3. SonarQube Analysis
+      # ------------------------------
+      - name: SonarQube Scan
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          npm install -g sonarqube-scanner || npm install --save-dev sonarqube-scanner
-          npx sonar-scanner \
-            -Dsonar.projectKey=starbugs-app-js \
-            -Dsonar.projectName="starbugs App JS" \
-            -Dsonar.projectVersion=0.0.${{ github.run_number }} \
+          wget -q -O sonar.zip https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-5.0.1.3006-linux.zip
+          unzip -qo sonar.zip
+          export PATH=$(pwd)/sonar-scanner-5.0.1.3006-linux/bin:$PATH
+
+          sonar-scanner \
+            -Dsonar.projectKey=starbugs-react \
             -Dsonar.sources=src \
-            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
-            -Dsonar.sourceEncoding=UTF-8 \
-            -Dsonar.host.url=$SONAR_HOST_URL \
-            -Dsonar.login=$SONAR_TOKEN
+            -Dsonar.host.url=${SONAR_URL} \
+            -Dsonar.login=${SONAR_TOKEN} \
+            -Dsonar.projectVersion=${VERSION}
 
-      # === Stage 4: Build React (Vite) App ===
-      - name: 🏗 Build React App
+      # ------------------------------
+      # 4. Build React App
+      # ------------------------------
+      - name: Build React App
+        run: npm run build
+
+      # ------------------------------
+      # 5. Package build artifact
+      # ------------------------------
+      - name: Create tar.gz Package
         run: |
-          npm run build
-          echo "✅ Build Completed!"
-          if [ ! -d "dist" ]; then
-            echo "❌ dist folder not found!"
-            exit 1
-          fi
-          ls -lh dist
+          mkdir -p packaged
+          tar -czf packaged/${NEXUS_ARTIFACT}-${VERSION}.tar.gz -C dist .
 
-      # === Stage 5: Package Artifact ===
-      - name: 📦 Package Build
+      # ------------------------------
+      # 6. Upload to Nexus
+      # ------------------------------
+      - name: Upload Artifact to Nexus
+        env:
+          NEXUS_USER: ${{ secrets.NEXUS_USER }}
+          NEXUS_PASS: ${{ secrets.NEXUS_PASS }}
         run: |
-          VERSION="0.0.${{ github.run_number }}"
-          TARBALL="$NEXUS_ARTIFACT-$VERSION.tar.gz"
-          tar -czf "$TARBALL" -C dist .
-          echo "✅ Package created: $TARBALL"
-          ls -lh *.tar.gz
+          curl -v -u ${NEXUS_USER}:${NEXUS_PASS} \
+            --upload-file "packaged/${NEXUS_ARTIFACT}-${VERSION}.tar.gz" \
+            "${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
 
-      # === Stage 6: Upload Artifact to Nexus ===
-      - name: 📤 Upload Artifact to Nexus
+      # ------------------------------
+      # 7. Docker Login
+      # ------------------------------
+      - name: Docker Login
+        run: echo ${{ secrets.DOCKERHUB_PASS }} | docker login -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
+
+      # ------------------------------
+      # 8. Download artifact from Nexus and Build Docker image
+      # ------------------------------
+      - name: Build Docker Image
         run: |
-          VERSION="0.0.${{ github.run_number }}"
-          TARBALL="$NEXUS_ARTIFACT-$VERSION.tar.gz"
-          echo "Uploading $TARBALL to Nexus..."
-          curl -v -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
-            --upload-file "$TARBALL" \
-            "$NEXUS_URL/repository/$NEXUS_REPO/$NEXUS_GROUP/$NEXUS_ARTIFACT/$VERSION/$TARBALL"
-          echo "✅ Artifact uploaded successfully!"
+          DOWNLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
+          curl -f -o app.tar.gz ${DOWNLOAD_URL}
 
-      # === Stage 7: Deploy to Nginx via SSH ===
-      - name: 🚀 Deploy to Nginx
-        uses: appleboy/ssh-action@v0.1.6
+          docker build -t ${DOCKER_IMAGE} .
+
+      # ------------------------------
+      # 9. Push to DockerHub
+      # ------------------------------
+      - name: Push Docker Image
+        run: docker push ${DOCKER_IMAGE}
+
+      # ------------------------------
+      # 10. SSH to EC2 & Deploy Container
+      # ------------------------------
+      - name: Deploy to EC2 Over SSH
+        uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ env.NGINX_HOST }}
-          key: ${{ env.NGINX_SSH_KEY }}
+          username: ubuntu
+          key: ${{ secrets.NGINX_SSH_KEY }}
           script: |
-            VERSION="0.0.${{ github.run_number }}"
-            TARBALL="$NEXUS_ARTIFACT-$VERSION.tar.gz"
-            TMP_DIR="/tmp/deploy_build"
-
-            # Clean old files
-            rm -rf $TMP_DIR
-            mkdir -p $TMP_DIR
-
-            # Download artifact from Nexus
-            curl -f -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
-              -O "$NEXUS_URL/repository/$NEXUS_REPO/$NEXUS_GROUP/$NEXUS_ARTIFACT/$VERSION/$TARBALL"
-
-            # Extract to temporary dir
-            tar -xzf "$TARBALL" -C $TMP_DIR
-
-            # Deploy to Nginx web root
-            sudo rm -rf $NGINX_PATH/*
-            sudo mkdir -p $NGINX_PATH
-            sudo cp -r $TMP_DIR/* $NGINX_PATH/
-            sudo chown -R www-data:www-data $NGINX_PATH
-
-            echo "✅ Deployment successful! Application live on Nginx!"
+            docker rm -f starbugs-app || true
+            docker pull ${DOCKER_IMAGE}
+            docker run -d --name starbugs-app -p 80:80 ${DOCKER_IMAGE}
