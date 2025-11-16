@@ -19,7 +19,7 @@ jobs:
       DOCKER_IMAGE: "reddi122/starbugs-app:${{ github.run_number }}"
 
     steps:
-      # ------------------------------
+      # -------------------------------
       # 1. Checkout Code
       # ------------------------------
       - name: Checkout code
