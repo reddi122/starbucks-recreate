@@ -2,7 +2,7 @@ name: Starbugs CI/CD
 
 on:
   push:
-    branches: ["main"]
+    branches: [ "main" ]
 
 jobs:
   build:
@@ -19,21 +19,21 @@ jobs:
       DOCKER_IMAGE: "reddi122/starbugs-app:${{ github.run_number }}"
 
     steps:
-      # -------------------------------
+      # ------------------------------------------------------
       # 1. Checkout Code
-      # ------------------------------
-      - name: Checkout code
+      # ------------------------------------------------------
+      - name: Checkout Code
         uses: actions/checkout@v3
 
-      # ------------------------------
+      # ------------------------------------------------------
       # 2. Install Dependencies
-      # ------------------------------
-      - name: Install Node dependencies
+      # ------------------------------------------------------
+      - name: Install Dependencies
         run: npm install
 
-      # ------------------------------
+      # ------------------------------------------------------
       # 3. SonarQube Analysis
-      # ------------------------------
+      # ------------------------------------------------------
       - name: SonarQube Scan
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -49,64 +49,65 @@ jobs:
             -Dsonar.login=${SONAR_TOKEN} \
             -Dsonar.projectVersion=${VERSION}
 
-      # ------------------------------
-      # 4. Build React App
-      # ------------------------------
+      # ------------------------------------------------------
+      # 4. Build React Application
+      # ------------------------------------------------------
       - name: Build React App
         run: npm run build
 
-      # ------------------------------
-      # 5. Package build artifact
-      # ------------------------------
-      - name: Create tar.gz Package
+      # ------------------------------------------------------
+      # 5. package into tar.gz
+      # ------------------------------------------------------
+      - name: Package Artifact
         run: |
           mkdir -p packaged
           tar -czf packaged/${NEXUS_ARTIFACT}-${VERSION}.tar.gz -C dist .
 
-      # ------------------------------
+      # ------------------------------------------------------
       # 6. Upload to Nexus
-      # ------------------------------
-      - name: Upload Artifact to Nexus
+      # ------------------------------------------------------
+      - name: Upload to Nexus
         env:
           NEXUS_USER: ${{ secrets.NEXUS_USER }}
           NEXUS_PASS: ${{ secrets.NEXUS_PASS }}
         run: |
-          curl -v -u ${NEXUS_USER}:${NEXUS_PASS} \
+          curl -u ${NEXUS_USER}:${NEXUS_PASS} \
             --upload-file "packaged/${NEXUS_ARTIFACT}-${VERSION}.tar.gz" \
             "${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
 
-      # ------------------------------
-      # 7. Docker Login
-      # ------------------------------
+      # ------------------------------------------------------
+      # 7. Docker login
+      # ------------------------------------------------------
       - name: Docker Login
-        run: echo ${{ secrets.DOCKERHUB_PASS }} | docker login -u ${{ secrets.DOCKERHUB_USER }} --password-stdin
+        run: |
+          echo "${{ secrets.DOCKERHUB_PASS }}" | docker login -u "${{ secrets.DOCKERHUB_USER }}" --password-stdin
 
-      # ------------------------------
-      # 8. Download artifact from Nexus and Build Docker image
-      # ------------------------------
+      # ------------------------------------------------------
+      # 8. Download artifact & Build Docker image
+      # ------------------------------------------------------
       - name: Build Docker Image
         run: |
-          DOWNLOAD_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
-          curl -f -o app.tar.gz ${DOWNLOAD_URL}
-
+          ART_URL="${NEXUS_URL}/repository/${NEXUS_REPO}/${NEXUS_GROUP}/${NEXUS_ARTIFACT}/${VERSION}/${NEXUS_ARTIFACT}-${VERSION}.tar.gz"
+          curl -o app.tar.gz "$ART_URL"
           docker build -t ${DOCKER_IMAGE} .
 
-      # ------------------------------
-      # 9. Push to DockerHub
-      # ------------------------------
+      # ------------------------------------------------------
+      # 9. Push Docker image
+      # ------------------------------------------------------
       - name: Push Docker Image
         run: docker push ${DOCKER_IMAGE}
 
-      # ------------------------------
-      # 10. SSH to EC2 & Deploy Container
-      # ------------------------------
-      - name: Deploy to EC2 Over SSH
+      # ------------------------------------------------------
+      # 10. SSH → Deploy on EC2 (Corrected Version)
+      # ------------------------------------------------------
+      - name: Deploy to EC2
         uses: appleboy/ssh-action@v0.1.7
         with:
           host: ${{ env.NGINX_HOST }}
           username: ubuntu
           key: ${{ secrets.NGINX_SSH_KEY }}
+          envs: DOCKER_IMAGE   # 👈 THIS IS THE FIX
           script: |
             docker rm -f starbugs-app || true
-            docker pull ${DOCKER_IMAGE}
-            docker run -d --name starbugs-app -p 80:80 ${DOCKER_IMAGE}
+            docker pull $DOCKER_IMAGE
+            docker run -d --name starbugs-app -p 80:80 $DOCKER_IMAGE
