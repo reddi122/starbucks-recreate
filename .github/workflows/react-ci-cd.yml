@@ -98,7 +98,7 @@ jobs:
         run: docker push ${DOCKER_IMAGE}
 
       # ------------------------------------------------------
-      # 10. SSH → Deploy on EC2 (Corrected Version)
+      # 10. SSH → Deploy on EC2 (existing step)
       # ------------------------------------------------------
       - name: Deploy to EC2
         uses: appleboy/ssh-action@v0.1.7
@@ -106,8 +106,28 @@ jobs:
           host: ${{ env.NGINX_HOST }}
           username: ubuntu
           key: ${{ secrets.NGINX_SSH_KEY }}
-          envs: DOCKER_IMAGE   # 👈 THIS IS THE FIX
+          envs: DOCKER_IMAGE
           script: |
             docker rm -f starbugs-app || true
             docker pull $DOCKER_IMAGE
             docker run -d --name starbugs-app-github-actions -p 80:80 $DOCKER_IMAGE
+
+      # ------------------------------------------------------
+      # 11. Run Docker Container on Server (added step)
+      # ------------------------------------------------------
+      - name: Run Docker Container on Server
+        uses: appleboy/ssh-action@v0.1.7
+        with:
+          host: ${{ secrets.SERVER_IP }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          envs: DOCKER_IMAGE
+          script: |
+            # Stop any existing container
+            docker rm -f starbugs-app || true
+
+            # Run the container on port 80
+            docker run -d --name starbugs-app -p 80:80 $DOCKER_IMAGE
+
+            # Optional: verify running container
+            docker ps -a
