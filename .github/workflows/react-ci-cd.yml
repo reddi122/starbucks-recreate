@@ -110,4 +110,4 @@ jobs:
           script: |
             docker rm -f starbugs-app || true
             docker pull $DOCKER_IMAGE
-            docker run -d --name starbugs-app-github-actions -p 8888:80 $DOCKER_IMAGE
+            docker run -d --name starbugs-app-github-actions -p 80:80 $DOCKER_IMAGE
